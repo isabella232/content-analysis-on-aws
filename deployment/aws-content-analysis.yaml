@@ -24,7 +24,7 @@ Conditions:
 Mappings:
   MediaInsightsEngine:
     Release:
-      Version: "v3.0.2"
+      Version: "v4.0.1"
   Application:
     SourceCode:
       GlobalS3Bucket: "%%GLOBAL_BUCKET_NAME%%"
@@ -80,6 +80,7 @@ Resources:
       Parameters:
         AnalyticsStreamArn: !GetAtt MieStack.Outputs.AnalyticsStreamArn
         MieDataplaneBucket: !GetAtt MieStack.Outputs.DataplaneBucket
+        DataPlaneHandlerArn: !GetAtt MieStack.Outputs.DataPlaneHandlerArn
         NodeType: !Ref OpensearchNodeSize
 
   # Deploy Auth stack
@@ -264,3 +265,6 @@ Resources:
 Outputs:
   ContentAnalyisSolution:
     Value: !GetAtt WebStack.Outputs.CloudfrontUrl
+  KibanaIP:
+    Description: IP of the nginx proxy for kibana
+    Value: !GetAtt OpensearchStack.Outputs.DomainArn

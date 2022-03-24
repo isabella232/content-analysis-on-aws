@@ -21,21 +21,52 @@ Parameters:
     Default: 2
   MieDataplaneBucket:
     Type: String
-    Description: "Name of the dataplane bucket"
-  AnalyticsStreamArn:
-    Description: "Arn of the MIE kinesis data stream"
+    Description: "Name of the MIE dataplane bucket"
+  DataPlaneHandlerArn:
     Type: String
+    Description: "ARN of the MIE dataplane API handler"
+  AnalyticsStreamArn:
+    Description: "ARN of the MIE kinesis data stream"
+    Type: String
+  SpecifyC9Owner:
+    AllowedValues: [true, false]
+    Description: Add an Owner ARN to the C9 Env
+    Type: String
+    Default: false
+
+Conditions:
+  AssignOwnerArn: !Equals [!Ref SpecifyC9Owner, true]
+
 
 Mappings:
   SourceCode:
     General:
       RegionalS3Bucket: '%%REGIONAL_BUCKET_NAME%%'
       KeyPrefix: "aws-content-analysis/%%VERSION%%"
-
+    
 Resources:
-  # Opensearch cluster
 
-  # TODO: Best Practice - Resource found with an explicit name, this disallows updates that require replacement of this resource
+  C9IDE:
+    Type: 'AWS::Cloud9::EnvironmentEC2'
+    DependsOn: PublicSubnet1RouteTableAssociation
+    Properties:
+      Name: WebDevCon-Workshop
+      Description: C9 IDE for WebDevCon Workshop
+      OwnerArn: !If [AssignOwnerArn, !Sub "arn:aws:iam::${AWS::AccountId}:assumed-role/TeamRole/MasterKey", !Ref "AWS::NoValue"]
+      Repositories:
+        - PathComponent: /workshop
+          RepositoryUrl: https://github.com/ianwow/webdevcon_mie_workshop.git
+      AutomaticStopTimeMinutes: 60
+      SubnetId: !Ref PublicSubnet1
+      InstanceType: t2.micro
+
+  KendraIndex:
+    Type: "AWS::Kendra::Index"
+    Properties:
+      Description: AIM315 Workshop
+      Edition: DEVELOPER_EDITION
+      Name: aim315index
+      RoleArn: !GetAtt KendraRole.Arn
 
   OpensearchServiceDomain:
     Type: "AWS::OpenSearchService::Domain"
@@ -64,7 +95,157 @@ Resources:
       EngineVersion: Elasticsearch_7.10
       SnapshotOptions:
         AutomatedSnapshotStartHour: 0
+      AccessPolicies:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: 'es:*'
+            Condition:
+              IpAddress:
+                'aws:SourceIp':
+                  - !Ref NginxElasticIP
+          - Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: 'es:*'
+            Condition:
+              IpAddress:
+                'aws:SourceIp':
+                  - 10.192.10.0/24
 
+  # Deploy NGINX EC2 instance
+
+  NginxInstance:
+    Type: 'AWS::EC2::Instance'
+    DependsOn:
+      - InternetGateway
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT10M
+    Properties:
+      ImageId: ami-087c17d1fe0178315
+      IamInstanceProfile: !Ref NginxInstanceProfile
+      InstanceType: t2.small
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: 'true'
+          DeleteOnTermination: 'true'
+          DeviceIndex: '0'
+          GroupSet:
+            - !GetAtt NginxInstanceSG.GroupId
+          SubnetId: !Ref PublicSubnet1
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum update -y
+          yum install -y aws-cfn-bootstrap cloud-init aws-cli
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource NginxInstance --region ${AWS::Region} --configsets ec2_setup
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource NginxInstance --region ${AWS::Region}
+      Tags:
+        - Key: Name
+          Value: nginx-proxy-for-kibana
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          ec2_setup:
+            - config_cfn
+            - install_packages
+            - config_nginx
+            # - create_cert
+            - start_services
+        config_cfn:
+          files:
+            "/etc/cfn/cfn-hup.conf":
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+              mode: '000400'
+              owner: root
+              group: root
+            "/etc/cfn/hooks.d/cfn-auto-reloader.conf":
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.NginxInstance.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource NginxInstance --region ${AWS::Region} --configsets ec2_setup
+                runas=root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+        install_packages:
+          commands:
+            01_install_nginx:
+              command: "amazon-linux-extras install -y nginx1"
+        config_nginx:
+          files:
+            "/etc/nginx/nginx.conf":
+              content: !Sub |
+                worker_processes  auto;
+
+                events {
+                    worker_connections  1024;
+                }
+
+                http {
+                    # ssl_session_cache shared:SSL:10m;
+                    # ssl_session_timeout 10m;
+                    sendfile on;
+                    tcp_nopush on;
+                    tcp_nodelay on;
+                    keepalive_timeout 65;
+                    types_hash_max_size 2048;
+                    server_names_hash_bucket_size 128;
+                    include /etc/nginx/mime.types;
+                    default_type application/octet-stream;
+                    gzip on;
+                    gzip_disable "msie6";
+
+                  server {
+                    listen       80;
+
+                    location / {
+                      proxy_http_version 1.1;
+                      proxy_set_header Host https://${OpensearchServiceDomain.DomainEndpoint};
+                      proxy_set_header Connection "Keep-Alive";
+                      proxy_set_header Proxy-Connection "Keep-Alive";
+                      proxy_pass https://${OpensearchServiceDomain.DomainEndpoint}/_plugin/kibana/;
+                      proxy_set_header X-Real-IP ${NginxElasticIP};
+                    }
+
+                    location ~ (/_plugin|/_search|kibana|/app/kibana|/app/timelion|/bundles|/es_admin|/plugins|/api|/ui|/elasticsearch) {
+                      proxy_pass              https://${OpensearchServiceDomain.DomainEndpoint};
+                      proxy_set_header        X-Real-IP ${NginxElasticIP};
+                    }
+                  }
+                }
+        create_cert:
+          commands:
+            01_mkdir_ssl:
+              command: mkdir /etc/nginx/ssl
+            02_ch_dir:
+              command: cd /etc/nginx/ssl
+            03_genrsa:
+              command: openssl genrsa -out nginx.key 2048
+            04_req_crt:
+              command: openssl req -new -key nginx.key -out nginx.csr -subj "/C=XX/ST=XX/L=nginx/O=nginx/CN=nginx"
+            05_x509:
+              command: openssl x509 -req -days 365 -in nginx.csr -signkey nginx.key -out nginx.crt
+            06_pem:
+              command: cat nginx.key nginx.crt | tee nginx.pem
+        start_services:
+          commands:
+            01_start_nginx:
+              command: "systemctl restart nginx"
+            02_onboot_nginx:
+              command: "systemctl enable nginx"
+              
   # open search consumer lambda
 
   OpensearchConsumerLambda:
@@ -108,8 +289,48 @@ Resources:
       FunctionName: !GetAtt OpensearchConsumerLambda.Arn
       StartingPosition: "LATEST"
 
+  # kendra consumer lambda
+
+  KendraConsumerLambda:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Handler: "lambda_handler.lambda_handler"
+      Role: !GetAtt StreamConsumerRole.Arn
+      Code:
+        S3Bucket: !Join ["-", [!FindInMap ["SourceCode", "General", "RegionalS3Bucket"], Ref: "AWS::Region"]]
+        S3Key:
+          !Join [
+              "/",
+            [
+              !FindInMap ["SourceCode", "General", "KeyPrefix"],
+              "kendraconsumer.zip",
+            ],
+          ]
+      Runtime: "python3.7"
+      Timeout: 900
+      MemorySize: 2048
+      Environment:
+        Variables:
+          KendraIndex: !Ref KendraIndex
+          DataplaneBucket: !Ref MieDataplaneBucket
+          DataplaneHandlerArn: !Ref DataPlaneHandlerArn
+
   # IAM
 
+  C9Role:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      
   # TODO: Need to clean up this policy with regards to opensearch access
   StreamConsumerRole:
     Type: "AWS::IAM::Role"
@@ -143,7 +364,9 @@ Resources:
                   - "logs:CreateLogGroup"
                   - "logs:CreateLogStream"
                   - "logs:PutLogEvents"
-                Resource: !Join ["",["arn:aws:logs:", Ref: "AWS::Region", ":", Ref: "AWS::AccountId", ":log-group:*"]]
+                  - "kendra:BatchPutDocument"
+                  - "lambda:InvokeFunction"
+                Resource: "*"
               - Effect: Allow
                 Action:
                   - "es:ESHttpPost"
@@ -162,8 +385,236 @@ Resources:
                   - "s3:GetObject"
                   - "s3:PutObject"
                 Resource: !Sub "arn:aws:s3:::${MieDataplaneBucket}/*"
+
+  KendraRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - kendra.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+
+  NginxGatewayRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+        Version: 2012-10-17
+      Path: /
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'es:*'
+                Resource: '*'
+            Version: 2012-10-17
+          PolicyName: NginxGateway-policy
+
+  RolePolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: AIM315InstancePolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: '*'
+            Resource: '*'
+      Roles:
+        - Ref: C9Role
+        - Ref: KendraRole
+
+  C9InstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      InstanceProfileName: AIM315WorkshopInstanceProfile
+      Path: /
+      Roles:
+        - Ref: C9Role
+
+  NginxInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    DependsOn:
+      - NginxGatewayRole
+    Properties:
+      Roles:
+        - !Ref NginxGatewayRole
+      Path: /
+
+
+  # Networking
+
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 10.192.0.0/16
+      Tags:
+        - Key: Name
+          Value: AIM315 VPC
+
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+        - Key: Name
+          Value: AIM315 IGW
+
+  InternetGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  PublicSubnet1:
+    DependsOn: VPC
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.192.10.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: AIM315 Public Subnet 1
+
+  PublicSubnet2:
+    DependsOn: VPC
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.192.11.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: AIM315 Public Subnet 2
+
+  PublicSubnet3:
+    DependsOn: VPC
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: us-east-1c
+      CidrBlock: 10.192.12.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: AIM315 Public Subnet 3
+
+  PublicSubnet4:
+    DependsOn: VPC
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: us-east-1d
+      CidrBlock: 10.192.13.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: AIM315 Public Subnet 4
+
+  PublicRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: AIM315 Public Routes
+
+  DefaultPublicRoute:
+    Type: 'AWS::EC2::Route'
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  PublicSubnet3RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet3
+
+  PublicSubnet4RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet4
+
+  SGIngressRuleHTTPS:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      GroupId: !GetAtt NginxInstanceSG.GroupId
+      IpProtocol: tcp
+      FromPort: '443'
+      ToPort: '443'
+      CidrIp: 0.0.0.0/0
+
+  SGIngressRuleHTTP:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      GroupId: !GetAtt NginxInstanceSG.GroupId
+      IpProtocol: tcp
+      FromPort: '80'
+      ToPort: '80'
+      CidrIp: 0.0.0.0/0
+
+  SGIngressRuleSSH:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      GroupId: !GetAtt NginxInstanceSG.GroupId
+      IpProtocol: tcp
+      FromPort: '22'
+      ToPort: '22'
+      CidrIp: 0.0.0.0/0
+
+  NginxElasticIP:
+    Type: 'AWS::EC2::EIP'
+
+  NginxElasticIpAssoc:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt NginxElasticIP.AllocationId
+      InstanceId: !Ref NginxInstance
+
+  NginxInstanceSG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Security Group for Nginx Reverse Proxy Instance
+      VpcId: !Ref VPC
+
 Outputs:
   DomainEndpoint:
     Value: !GetAtt OpensearchServiceDomain.DomainEndpoint
   DomainArn:
     Value: !GetAtt OpensearchServiceDomain.Arn
+  KibanaIP:
+    Description: IP of the nginx proxy for kibana
+    Value: !Ref NginxElasticIP
+    Export:
+      Name: !Join [":", [!Ref "AWS::StackName", KibanaIP]]

@@ -159,7 +159,6 @@ fi
 # Get reference for all important folders
 build_dir="$PWD"
 source_dir="$build_dir/../source"
-consumer_dir="$build_dir/../source/consumer"
 global_dist_dir="$build_dir/global-s3-assets"
 regional_dist_dir="$build_dir/regional-s3-assets"
 
@@ -239,7 +238,7 @@ echo "Opensearch consumer Function"
 echo "------------------------------------------------------------------------------"
 
 echo "Building Opensearch Consumer function"
-cd "$source_dir/consumer" || exit 1
+cd "$source_dir/opensearch_consumer" || exit 1
 
 [ -e dist ] && rm -r dist
 mkdir -p dist
@@ -263,6 +262,36 @@ popd || exit 1
 
 zip -q -g dist/esconsumer.zip ./*.py
 cp "./dist/esconsumer.zip" "$regional_dist_dir/esconsumer.zip"
+
+echo "------------------------------------------------------------------------------"
+echo "Kendra consumer Function"
+echo "------------------------------------------------------------------------------"
+
+echo "Building Kendra Consumer function"
+cd "$source_dir/kendra_consumer" || exit 1
+
+[ -e dist ] && rm -r dist
+mkdir -p dist
+[ -e package ] && rm -r package
+mkdir -p package
+echo "preparing packages from requirements.txt"
+# Package dependencies listed in requirements.txt
+pushd package || exit 1
+# Handle distutils install errors with setup.cfg
+touch ./setup.cfg
+echo "[install]" > ./setup.cfg
+echo "prefix= " >> ./setup.cfg
+if ! [ -x "$(command -v pip3)" ]; then
+  echo "pip3 not installed. This script requires pip3. Exiting."
+  exit 1
+else
+    pip3 install --quiet -r ../requirements.txt --target .
+fi
+zip -q -r9 ../dist/kendraconsumer.zip .
+popd || exit 1
+
+zip -q -g dist/esconsumer.zip ./*.py
+cp "./dist/kendraconsumer.zip" "$regional_dist_dir/kendraconsumer.zip"
 
 echo "------------------------------------------------------------------------------"
 echo "Build vue website"
