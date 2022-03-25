@@ -25,15 +25,6 @@
         >
           Successfully Deleted Asset
         </b-alert>
-        <b-row align-h="center">
-          <h1>Media Collection</h1>
-        </b-row>
-        <b-row
-          align-h="center"
-          class="tagline"
-        >
-          <b>Discover insights in your media by searching for keywords, objects, or even people.</b>
-        </b-row>
         <b-row
           class="my-1"
           align-v="center"
@@ -143,6 +134,14 @@
           </div>
         </b-col>
       </b-row>
+      <b-row>
+        <b-col>
+          <div v-if="user_defined_query.length != 0">
+            <br><label>Equivalent command line:</label>
+            <br><p class="text-secondary">{{curl_request}}</p>
+          </div>
+        </b-col>
+      </b-row>
     </b-container>
   </div>
 </template>
@@ -217,6 +216,9 @@
       }
     },
     computed: {
+      curl_request() { 
+        return "awscurl -X POST --service es \"" + this.SEARCH_ENDPOINT + "/_search?q=" + this.user_defined_query + "\" -H 'Content-Type: application/json' -d '{\"size\": 100}' | jq" 
+      },
       totalRows() {
         return this.asset_list.length
       }
@@ -447,10 +449,10 @@
     vertical-align: middle;
   }
   .headerTextBackground {
-    background-color: #191918;
+    
     max-width: 100%;
     height: auto;
-    padding-bottom: 1%;
+    
   }
   .resultsTable {
     padding-top: 1%;
@@ -459,7 +461,7 @@
     color: #ED900E;
   }
   a {
-    color: #ED900E;
+    color: dodgerblue;
   }
   .tagline {
     color: white

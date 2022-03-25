@@ -4,6 +4,8 @@ import Analysis from '@/views/Analysis.vue'
 import Upload from '@/views/UploadToAWSS3.vue'
 import Collection from '@/views/Collection.vue'
 import Login from '@/views/Login.vue'
+import SearchFlix from '@/views/SearchFlix.vue'
+import VideoPlayer2 from '@/components/VideoPlayer2.vue'
 
 Vue.use(VueRouter);
 
@@ -11,6 +13,11 @@ const router = new VueRouter({
   mode: 'history',
   base: process.env.BASE_URL,
   routes: [
+    {
+      path: '/',
+      name: 'SearchFlix',
+      component: SearchFlix,
+    },
     {
       path: '/collection',
       name: 'collection',
@@ -34,7 +41,13 @@ const router = new VueRouter({
       name: "Login",
       component: Login,
       meta: { requiresAuth: false },
-    }
+    },
+    {
+      path: '/video',
+      name: 'video',
+      component: VideoPlayer2,
+    },
+
   ]
 });
 

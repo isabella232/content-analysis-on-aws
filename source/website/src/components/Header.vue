@@ -2,11 +2,9 @@
   <div>
     <b-navbar
       toggleable="lg"
-      type="dark"
-      variant="dark"
     >
       <b-navbar-brand to="/">
-        AWS Content Analysis
+        SearchFlix
       </b-navbar-brand>
       <b-navbar-toggle target="nav-collapse" />
 
@@ -17,16 +15,21 @@
         <!-- Right aligned nav items -->
         <b-navbar-nav class="ml-auto">
           <b-nav-item
-            to="/upload"
-            :class="{ active: isUploadActive }"
+              to="/"
           >
-            Upload
+            Home
           </b-nav-item>
           <b-nav-item
             to="/collection"
             :class="{ active: isCollectionActive }"
           >
-            Collection
+            Search
+          </b-nav-item>
+          <b-nav-item
+              to="/upload"
+              :class="{ active: isUploadActive }"
+          >
+            Upload
           </b-nav-item>
           <b-nav-item
             href="" @click.stop.prevent="openWindow('https://github.com/awslabs/aws-media-insights-engine/blob/master/IMPLEMENTATION_GUIDE.md')"
@@ -37,9 +40,7 @@
             v-if="signedIn"
             @click="signOut()"
           >
-            <p id="signOutBtn">
-              Sign Out
-            </p>
+            Logout
           </b-nav-item>
         </b-navbar-nav>
       </b-collapse>
@@ -91,8 +92,14 @@ export default {
 
 <style>
 
-#signOutBtn {
-color: #ED900E;
+
+.brand {
+  padding-left: 10px;
+  color: #31255D;
+}
+
+.navbar{
+  background-color: #99D7F7!important;
 }
 
 </style>

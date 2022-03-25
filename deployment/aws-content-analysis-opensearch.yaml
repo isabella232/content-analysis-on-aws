@@ -32,7 +32,7 @@ Parameters:
     AllowedValues: [true, false]
     Description: Add an Owner ARN to the C9 Env
     Type: String
-    Default: false
+    Default: true
 
 Conditions:
   AssignOwnerArn: !Equals [!Ref SpecifyC9Owner, true]
