@@ -290,7 +290,7 @@ fi
 zip -q -r9 ../dist/kendraconsumer.zip .
 popd || exit 1
 
-zip -q -g dist/esconsumer.zip ./*.py
+zip -q -g dist/kendraconsumer.zip ./*.py
 cp "./dist/kendraconsumer.zip" "$regional_dist_dir/kendraconsumer.zip"
 
 echo "------------------------------------------------------------------------------"

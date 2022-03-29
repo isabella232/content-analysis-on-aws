@@ -14,9 +14,10 @@ const router = new VueRouter({
   base: process.env.BASE_URL,
   routes: [
     {
-      path: '/',
+      path: '/home',
       name: 'SearchFlix',
       component: SearchFlix,
+      meta: { requiresAuth: true }
     },
     {
       path: '/collection',
@@ -40,7 +41,7 @@ const router = new VueRouter({
       path: "/",
       name: "Login",
       component: Login,
-      meta: { requiresAuth: false },
+      meta: { requiresAuth: false }
     },
     {
       path: '/video',

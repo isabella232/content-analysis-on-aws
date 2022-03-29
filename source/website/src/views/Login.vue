@@ -56,7 +56,7 @@ export default {
         if (this.session == null) {
           console.log('user must login')
         } else {
-          this.$router.push({name: "collection"})
+          this.$router.push({name: "SearchFlix"})
         }
       })
     }

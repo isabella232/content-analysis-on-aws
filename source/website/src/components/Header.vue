@@ -3,7 +3,7 @@
     <b-navbar
       toggleable="lg"
     >
-      <b-navbar-brand to="/">
+      <b-navbar-brand to="/home">
         SearchFlix
       </b-navbar-brand>
       <b-navbar-toggle target="nav-collapse" />
@@ -15,7 +15,7 @@
         <!-- Right aligned nav items -->
         <b-navbar-nav class="ml-auto">
           <b-nav-item
-              to="/"
+              to="/home"
           >
             Home
           </b-nav-item>
