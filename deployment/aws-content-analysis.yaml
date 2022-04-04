@@ -17,6 +17,11 @@ Parameters:
       - "c4.xlarge.search"
       - "r4.large.search"
       - "r4.xlarge.search"
+  SetupCloud9ForEventEngine:
+    AllowedValues: [true, false]
+    Description: Configure Cloud9 owner for Event Engine environment
+    Type: String
+    Default: false
 
 Conditions:
   EnableAnonymousData: !Equals [ !FindInMap [AnonymousData,SendAnonymousData,Data], Yes]
@@ -82,6 +87,7 @@ Resources:
         MieDataplaneBucket: !GetAtt MieStack.Outputs.DataplaneBucket
         DataPlaneHandlerArn: !GetAtt MieStack.Outputs.DataPlaneHandlerArn
         NodeType: !Ref OpensearchNodeSize
+        SpecifyC9Owner: !Ref SetupCloud9ForEventEngine
 
   # Deploy Auth stack
 
